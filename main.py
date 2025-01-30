@@ -38,7 +38,9 @@ def cost_remake(message: types.Message):
         bot.register_next_step_handler(message, cost_remake)
     else:
         bot.reply_to(message, 'Цена изменена!')
-        money_file.write_text(message.text)
+        with open(money_file, 'w') as file:
+            file.write(message.text)
+            file.close()
 
 def send_info_to_adm(message: types.Message):
     if message.text:
@@ -46,10 +48,7 @@ def send_info_to_adm(message: types.Message):
         db.execute('SELECT balance FROM users WHERE id = %s', (message.from_user.id,))
         balance = db.fetchone()
         if balance:
-            bot.send_message(id_of_admin_group, f'Пользователь: {message.from_user.full_name} ({message.from_user.id})\n'
-                             f'Баланс: {balance[0]}\nАдрес кошелька: {message.text}\n'
-                             'Напишите "принять" в ответ на сообщение, чтобы отправить пользователю уведомление '
-                             'о выводе баланса и для сброса его баланса до 0.\n{message.from_user.id}')
+            bot.send_message(id_of_admin_group, f'Пользователь: {message.from_user.full_name} ({message.from_user.id})\nБаланс: {balance[0]}\nАдрес кошелька: {message.text}\nНапишите "принять" в ответ на сообщение, чтобы отправить пользователю уведомление о выводе баланса и для сброса его баланса до 0.\n{message.from_user.id}')
     else:
         bot.reply_to(message, 'Напишите адрес кошелька в текстовом сообщении.')
         bot.register_next_step_handler(message, send_info_to_adm)
@@ -86,7 +85,17 @@ def get_balance(message: types.Message):
 
 @bot.message_handler(commands=['referral'])
 def get_link_(message: types.Message):
-    bot.reply_to(message, f'Твоя реферальная ссылка: https://t.me/terebonk_referral_bot/?start={message.from_user.id}')
+    if bot.get_chat_member(group, message.from_user.id).status in ['left', 'kicked']:
+        bot.reply_to(message, f'Невозможно получить реферальную ссылку.\nВступи в группу @terebonka_ru и приходи снова!')
+    else:
+        bot.reply_to(message, f'Твоя реферальная ссылка: https://t.me/terebonk_referral_bot/?start={message.from_user.id}')
+
+@bot.message_handler(commands=['adminka'])
+def admin_panel(message: types.Message):
+    if message.from_user.id not in admins:
+        pass
+    else:
+        bot.reply_to(message, f'Привет, админ!\nВыбери действие из меню ниже.', reply_markup=types.InlineKeyboardMarkup(row_width=1).add(types.InlineKeyboardButton('Вывести данные о пользователях', callback_data='excel_data'), types.InlineKeyboardButton('Изменить цену вознаграждения', callback_data='money-cost')))
 
 @bot.message_handler(commands=['redeem'])
 def get_money_from_admins(message: types.Message):
@@ -101,9 +110,46 @@ def callback_handler(call: types.CallbackQuery):
         if balance:
             bot.send_message(call.message.chat.id, f'Твой баланс: {balance[0]}')
     elif call.data == 'ref_link':
-        bot.send_message(call.message.chat.id, f'Твоя реферальная ссылка: https://t.me/terebonk_referral_bot/?start={call.from_user.id}')
+        if bot.get_chat_member(group, call.from_user.id).status in ['left', 'kicked']:
+            bot.send_message(call.message.chat.id, f'Невозможно получить реферальную ссылку.\nВступи в группу @terebonka_ru и приходи снова!')
+        else:
+            bot.send_message(call.message.chat.id, f'Твоя реферальная ссылка: https://t.me/terebonk_referral_bot/?start={call.from_user.id}')
     elif call.data == 'vyvod':
         bot.send_message(call.message.chat.id, 'Введите адрес кошелька.')
         bot.register_next_step_handler(call.message, send_info_to_adm)
+    elif call.data == 'excel_data':
+        data = db.execute(f'SELECT * FROM users').fetchall()
+        chislo = random.randint(1, 100000)
+        file = open(path / f'{chislo}.txt', 'w')
+        file.write(str(data))
+        file.close()
+        bot.send_document(call.message.chat.id, open(path / f'{chislo}.txt', 'rb'), caption='Данные пользователей из бд.')
+        os.remove(path / f'{chislo}.txt')
+    elif call.data == 'money-cost':
+        bot.send_message(call.message.chat.id, f'Напишите стоимость одного реферала.')
+        bot.register_next_step_handler(call.message, cost_remake)
+        
+@bot.message_handler(content_types=['text'])
+def textt(message: types.Message):
+    if message.chat.id == id_of_admin_group:
+        if message.reply_to_message:
+            if message.reply_to_message.from_user.id == bot.get_me().id:
+                if message.text.lower() == 'принять':
+                    id = int(message.reply_to_message.text.split()[-1])
+                    bot.reply_to(message, f'Успешно отправили пользователю уведомление и сбросили баланс до 0!')
+                    db.execute('UPDATE users SET balance=%s WHERE id=%s', (0, id))
+                    conn.commit()
+                    try:
+                        bot.send_message(id, f'Администраторы вывели Вам деньги на баланс кошелька. Баланс в боте был сброшен до 0.')
+                    except:
+                        pass
+                else:
+                    pass
+            else:
+                pass
+        else:
+            pass
+    else:
+        pass
 
-bot.polling(none_stop=True)
+bot.infinity_polling()
